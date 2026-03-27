@@ -4,10 +4,35 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+      day: "tuesday"
+      time: "06:00"
+      timezone: "Europe/Zurich"
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+      github-actions-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
 
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+      day: "tuesday"
+      time: "06:15"
+      timezone: "Europe/Zurich"
+    open-pull-requests-limit: 3
+    groups:
+      python-routine:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      python-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
