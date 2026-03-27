@@ -34,7 +34,10 @@ async def test_search_recent(monkeypatch):
 
     with aioresponses() as m:
         # Use regex to match URL with many query params
-        m.get(re.compile(r"https://api.x.com/2/tweets/search/recent.*"), payload=mock_response)
+        m.get(
+            re.compile(r"^https://api\.x\.com/2/tweets/search/recent(?:\?.*)?$"),
+            payload=mock_response,
+        )
 
         async with client:
             result = await client.search("bitcoin", limit=10)
@@ -61,7 +64,10 @@ async def test_get_user(monkeypatch):
     }
 
     with aioresponses() as m:
-        m.get(re.compile(r"https://api.x.com/2/users/by/username/user1.*"), payload=mock_response)
+        m.get(
+            re.compile(r"^https://api\.x\.com/2/users/by/username/user1(?:\?.*)?$"),
+            payload=mock_response,
+        )
 
         async with client:
             user = await client.get_user("user1")
@@ -86,7 +92,10 @@ async def test_get_trends(monkeypatch):
     }
 
     with aioresponses() as m:
-        m.get(re.compile(r"https://api.x.com/2/trends/by/woeid/1.*"), payload=mock_response)
+        m.get(
+            re.compile(r"^https://api\.x\.com/2/trends/by/woeid/1(?:\?.*)?$"),
+            payload=mock_response,
+        )
 
         async with client:
             trends = await client.get_trends(1)
