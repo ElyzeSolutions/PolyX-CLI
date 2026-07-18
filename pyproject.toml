@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "polyx-cli"
-version = "0.1.0"
-description = "Terminal toolkit for X/Twitter search, monitoring, sentiment, and reporting"
+version = "0.2.0"
+description = "Terminal toolkit for X/Twitter news, search, monitoring, sentiment, and reporting"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
 license-files = ["LICENSE"]

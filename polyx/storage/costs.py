@@ -11,14 +11,19 @@ if TYPE_CHECKING:
 
 from polyx.types import CostEntry, DailyAggregate
 
+NEWS_RESOURCE_ESTIMATE_USD = 0.005
+
 # Cost rates per operation (matching X API v2 pricing)
 COST_RATES: dict[str, dict[str, float]] = {
     "search/recent": {"per_tweet": 0.005, "per_call": 0},
     "search/all": {"per_tweet": 0.01, "per_call": 0},
-    "trends": {"per_tweet": 0, "per_call": 0.10},
-    "user_lookup": {"per_tweet": 0, "per_call": 0.005},
+    "trends": {"per_tweet": 0, "per_call": 0.010},
+    "user_lookup": {"per_tweet": 0, "per_call": 0.010},
     "timeline": {"per_tweet": 0.005, "per_call": 0},
     "tweet_lookup": {"per_tweet": 0, "per_call": 0.005},
+    # Working estimator for returned X News resources. X currently lists
+    # ``news.new`` at $0.005/event; verify live endpoint rates in the console.
+    "news/search": {"per_tweet": NEWS_RESOURCE_ESTIMATE_USD, "per_call": 0},
     "graphql": {"per_tweet": 0, "per_call": 0},  # Free
 }
 

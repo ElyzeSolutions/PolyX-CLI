@@ -19,6 +19,11 @@ def async_command(f):  # noqa: ANN001, ANN201
     return wrapper
 
 
+def _news_cache_key(query: str, domain: str, max_results: int, max_age_hours: int) -> str:
+    """Build the canonical cache key for a News request."""
+    return f"news:v1:{domain}:{max_results}:{max_age_hours}:{query}"
+
+
 class AliasedGroup(click.Group):
     """Click group with command aliases."""
 
@@ -27,13 +32,16 @@ class AliasedGroup(click.Group):
         "w": "watch",
         "p": "profile",
         "tr": "trends",
+        "n": "news",
     }
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         cmd_name = self.ALIASES.get(cmd_name, cmd_name)
         return super().get_command(ctx, cmd_name)
 
-    def resolve_command(self, ctx: click.Context, args: list[str]) -> tuple[str | None, click.Command | None, list[str]]:
+    def resolve_command(
+        self, ctx: click.Context, args: list[str]
+    ) -> tuple[str | None, click.Command | None, list[str]]:
         cmd_name = args[0] if args else None
         if cmd_name and cmd_name in self.ALIASES:
             args[0] = self.ALIASES[cmd_name]
@@ -137,7 +145,89 @@ async def search(
 
     if not result.cached:
         cache.set(cache_key, result.to_dict(), ttl=config.cache_ttl)
-        costs.record("search", result.total_results, "search/recent" if not full_archive else "search/all")
+        costs.record(
+            "search", result.total_results, "search/recent" if not full_archive else "search/all"
+        )
+
+
+@main.command()
+@click.argument("query")
+@click.option(
+    "--max-results",
+    "-n",
+    type=click.IntRange(1, 100),
+    default=10,
+    show_default=True,
+    help="Maximum news stories to return.",
+)
+@click.option(
+    "--max-age-hours",
+    type=click.IntRange(1, 720),
+    default=168,
+    show_default=True,
+    help="Only return stories updated within this many hours.",
+)
+@click.option(
+    "--domain",
+    type=click.Choice(["polymarket", "gold"]),
+    required=True,
+    help="Routing domain for downstream consumers.",
+)
+@click.option("--no-cache", is_flag=True, help="Bypass cache and fetch fresh stories.")
+@click.pass_context
+@async_command
+async def news(
+    ctx: click.Context,
+    query: str,
+    max_results: int,
+    max_age_hours: int,
+    domain: str,
+    no_cache: bool,
+) -> None:
+    """Search breaking news stories clustered and summarized by X."""
+    from polyx.client.auto import AutoClient
+    from polyx.config import Config
+    from polyx.output.formats import get_formatter
+    from polyx.storage.cache import FileCache
+    from polyx.storage.costs import NEWS_RESOURCE_ESTIMATE_USD, CostTracker
+    from polyx.types import NewsSearchResult
+
+    config = Config.load()
+    fmt = get_formatter(ctx.obj["output_format"])
+    cache = FileCache(config)
+    costs = CostTracker(config)
+    cache_key = _news_cache_key(query, domain, max_results, max_age_hours)
+
+    if not no_cache:
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            result = NewsSearchResult.from_dict(cached)
+            result.cached = True
+            click.echo(fmt.format_news(result))
+            return
+
+    budget_ok, remaining_budget, _ = costs.check_budget()
+    affordable_results = int(remaining_budget / NEWS_RESOURCE_ESTIMATE_USD + 1e-9)
+    if not budget_ok or affordable_results < 1:
+        raise click.ClickException(
+            "X News request blocked: PolyX daily budget is exhausted. "
+            "Cached results remain available; raise POLYX_DAILY_BUDGET to allow paid calls."
+        )
+    live_max_results = min(max_results, affordable_results)
+
+    async with AutoClient(config, client_type=ctx.obj["client_type"]) as client:
+        result = await client.search_news(
+            query,
+            max_results=live_max_results,
+            max_age_hours=max_age_hours,
+        )
+
+    result.domain = domain
+    # X has already served the paid resources. Record them before output or
+    # cache I/O so a broken pipe or local write failure cannot hide the spend.
+    costs.record("news", result.total_results, "news/search")
+    click.echo(fmt.format_news(result))
+    cache.set(cache_key, result.to_dict(), ttl=config.cache_ttl)
 
 
 @main.command()

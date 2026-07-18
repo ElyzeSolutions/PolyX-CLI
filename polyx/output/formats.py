@@ -8,7 +8,15 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from polyx.types import SearchResult, SentimentResult, TrendingTopic, Tweet, User
+from polyx.types import (
+    NewsSearchResult,
+    NewsStory,
+    SearchResult,
+    SentimentResult,
+    TrendingTopic,
+    Tweet,
+    User,
+)
 
 
 def compact_number(n: int) -> str:
@@ -41,10 +49,32 @@ def time_ago(date_str: str) -> str:
 
 
 class Formatter(Protocol):
-    def format_search(self, result: SearchResult, sentiment: SentimentResult | None = None) -> str: ...
+    def format_search(
+        self, result: SearchResult, sentiment: SentimentResult | None = None
+    ) -> str: ...
     def format_tweet(self, tweet: Tweet) -> str: ...
     def format_profile(self, user: User, tweets: list[Tweet]) -> str: ...
     def format_trends(self, topics: list[TrendingTopic]) -> str: ...
+    def format_news(self, result: NewsSearchResult) -> str: ...
+
+
+def _news_context(story: NewsStory) -> str:
+    """Build a compact context line for human-readable news output."""
+    parts: list[str] = []
+    if story.contexts.tickers:
+        parts.append("Tickers: " + ", ".join(story.contexts.tickers))
+    if story.contexts.topics:
+        parts.append("Topics: " + ", ".join(story.contexts.topics))
+    if story.contexts.entities.organizations:
+        parts.append("Organizations: " + ", ".join(story.contexts.entities.organizations))
+    return " · ".join(parts)
+
+
+def _empty_news_message(result: NewsSearchResult) -> str:
+    details = "; ".join(
+        error.detail or error.title for error in result.errors if error.detail or error.title
+    )
+    return f"No news stories found. X API: {details}" if details else "No news stories found."
 
 
 class TerminalFormatter:
@@ -138,6 +168,40 @@ class TerminalFormatter:
             lines.append(f"{i:2d}. {topic.name}{vol}")
         return "\n".join(lines)
 
+    def format_news(self, result: NewsSearchResult) -> str:
+        if not result.stories:
+            return _empty_news_message(result)
+
+        lines: list[str] = []
+        for index, story in enumerate(result.stories, 1):
+            age = time_ago(story.updated_at)
+            category = f" [{story.category}]" if story.category else ""
+            age_label = f" · {age}" if age else ""
+            lines.append(f"{index}. {story.name}{category}{age_label}")
+            if story.hook:
+                lines.append(f"   {story.hook}")
+            if story.summary and story.summary != story.hook:
+                lines.append(f"   {story.summary}")
+            context = _news_context(story)
+            if context:
+                lines.append(f"   {context}")
+            if story.cluster_posts:
+                lines.append(
+                    f"   {len(story.cluster_posts)} clustered posts · "
+                    f"https://x.com/i/status/{story.cluster_posts[0].post_id}"
+                )
+            lines.append("")
+
+        lines.append(
+            f"Query: {result.query} | Domain: {result.domain or 'unscoped'} | "
+            f"{len(result.stories)} stories | last {result.max_age_hours}h"
+        )
+        if result.cached:
+            lines[-1] += " | cached"
+        if result.errors:
+            lines.append(f"X API returned {len(result.errors)} partial errors.")
+        return "\n".join(lines)
+
 
 class JsonFormatter:
     """Full JSON output with metadata envelope."""
@@ -161,13 +225,24 @@ class JsonFormatter:
         return json.dumps(tweet.to_dict(), indent=2)
 
     def format_profile(self, user: User, tweets: list[Tweet]) -> str:
-        return json.dumps({
-            "user": user.to_dict(),
-            "recent_tweets": [t.to_dict() for t in tweets],
-        }, indent=2)
+        return json.dumps(
+            {
+                "user": user.to_dict(),
+                "recent_tweets": [t.to_dict() for t in tweets],
+            },
+            indent=2,
+        )
 
     def format_trends(self, topics: list[TrendingTopic]) -> str:
         return json.dumps([t.to_dict() for t in topics], indent=2)
+
+    def format_news(self, result: NewsSearchResult) -> str:
+        data = {
+            "source": "polyx",
+            "timestamp": datetime.now(UTC).isoformat(),
+            **result.to_dict(),
+        }
+        return json.dumps(data, indent=2)
 
 
 class JsonlFormatter:
@@ -189,22 +264,76 @@ class JsonlFormatter:
     def format_trends(self, topics: list[TrendingTopic]) -> str:
         return "\n".join(json.dumps(t.to_dict(), separators=(",", ":")) for t in topics)
 
+    def format_news(self, result: NewsSearchResult) -> str:
+        metadata: dict[str, Any] = {
+            "source": "polyx",
+            "query": result.query,
+            "domain": result.domain,
+            "client_type": result.client_type,
+            "max_age_hours": result.max_age_hours,
+            "total_results": result.total_results,
+            "cached": result.cached,
+            "errors": [error.to_dict() for error in result.errors],
+        }
+        if not result.stories:
+            return json.dumps({**metadata, "type": "news_result"}, separators=(",", ":"))
+        return "\n".join(
+            json.dumps(
+                {**metadata, "type": "news_story", **story.to_dict()},
+                separators=(",", ":"),
+            )
+            for story in result.stories
+        )
+
 
 class CsvFormatter:
     """Flat CSV output for spreadsheets."""
 
-    HEADERS = ["id", "username", "name", "text", "likes", "retweets", "replies", "impressions", "created_at", "url"]
+    HEADERS = [
+        "id",
+        "username",
+        "name",
+        "text",
+        "likes",
+        "retweets",
+        "replies",
+        "impressions",
+        "created_at",
+        "url",
+    ]
+    NEWS_HEADERS = [
+        "source",
+        "domain",
+        "query",
+        "id",
+        "name",
+        "category",
+        "updated_at",
+        "summary",
+        "hook",
+        "tickers",
+        "topics",
+    ]
 
     def _rows(self, tweets: list[Tweet]) -> str:
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(self.HEADERS)
         for t in tweets:
-            writer.writerow([
-                t.id, t.username, t.name, t.text,
-                t.metrics.likes, t.metrics.retweets, t.metrics.replies, t.metrics.impressions,
-                t.created_at, t.tweet_url,
-            ])
+            writer.writerow(
+                [
+                    t.id,
+                    t.username,
+                    t.name,
+                    t.text,
+                    t.metrics.likes,
+                    t.metrics.retweets,
+                    t.metrics.replies,
+                    t.metrics.impressions,
+                    t.created_at,
+                    t.tweet_url,
+                ]
+            )
         return output.getvalue().rstrip()
 
     def format_search(self, result: SearchResult, sentiment: SentimentResult | None = None) -> str:
@@ -224,6 +353,28 @@ class CsvFormatter:
         writer.writerow(["name", "tweet_volume", "url"])
         for t in topics:
             writer.writerow([t.name, t.tweet_volume, t.url])
+        return output.getvalue().rstrip()
+
+    def format_news(self, result: NewsSearchResult) -> str:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(self.NEWS_HEADERS)
+        for story in result.stories:
+            writer.writerow(
+                [
+                    "polyx",
+                    result.domain,
+                    result.query,
+                    story.id,
+                    story.name,
+                    story.category,
+                    story.updated_at,
+                    story.summary,
+                    story.hook,
+                    ",".join(story.contexts.tickers),
+                    ",".join(story.contexts.topics),
+                ]
+            )
         return output.getvalue().rstrip()
 
 
@@ -301,6 +452,38 @@ class MarkdownFormatter:
         for i, topic in enumerate(topics, 1):
             vol = f" ({compact_number(topic.tweet_volume)} tweets)" if topic.tweet_volume else ""
             lines.append(f"{i}. **{topic.name}**{vol}")
+        return "\n".join(lines)
+
+    def format_news(self, result: NewsSearchResult) -> str:
+        if not result.stories:
+            return _empty_news_message(result)
+
+        lines = [f"# X News: {result.query}", ""]
+        for index, story in enumerate(result.stories, 1):
+            age = time_ago(story.updated_at)
+            suffix = f" · {age}" if age else ""
+            lines.extend([f"## {index}. {story.name}{suffix}", ""])
+            if story.hook:
+                lines.extend([f"> {story.hook}", ""])
+            if story.summary and story.summary != story.hook:
+                lines.extend([story.summary, ""])
+            context = _news_context(story)
+            if context:
+                lines.extend([f"**Context:** {context}", ""])
+            if story.cluster_posts:
+                post_links = [
+                    f"[Post {post.post_id}](https://x.com/i/status/{post.post_id})"
+                    for post in story.cluster_posts
+                ]
+                lines.extend(["**Clustered posts:** " + " · ".join(post_links), ""])
+
+        lines.extend(
+            [
+                "---",
+                f"*{len(result.stories)} stories | Last {result.max_age_hours}h | "
+                f"Domain: {result.domain or 'unscoped'} | Query: {result.query}*",
+            ]
+        )
         return "\n".join(lines)
 
 
