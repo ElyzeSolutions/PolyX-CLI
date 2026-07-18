@@ -9,7 +9,7 @@ from polyx.exceptions import ConfigurationError, NotSupportedError
 
 if TYPE_CHECKING:
     from polyx.config import Config
-    from polyx.types import SearchResult, TrendingTopic, Tweet, User
+    from polyx.types import NewsSearchResult, SearchResult, TrendingTopic, Tweet, User
 
 log = logging.getLogger("polyx.client")
 
@@ -67,6 +67,25 @@ class AutoClient:
         if hasattr(self._client, "search_full_archive"):
             return await self._client.search_full_archive(query, limit=limit, pages=pages)
         raise NotSupportedError("Full archive search requires the API v2 client (--client v2)")
+
+    async def search_news(
+        self,
+        query: str,
+        max_results: int = 10,
+        max_age_hours: int = 168,
+    ) -> NewsSearchResult:
+        """Search official X News when the selected client supports it."""
+        from polyx.client.api_v2 import XAPIv2Client
+
+        if isinstance(self._client, XAPIv2Client):
+            return await self._client.search_news(
+                query,
+                max_results=max_results,
+                max_age_hours=max_age_hours,
+            )
+        raise NotSupportedError(
+            "News search requires the official X API v2 client and X_BEARER_TOKEN"
+        )
 
     async def get_tweet(self, tweet_id: str) -> Tweet:
         return await self._client.get_tweet(tweet_id)

@@ -22,8 +22,11 @@ def test_file_cache(tmp_path):
 
     # Clear
     cache.set(key, data, ttl=10)
+    unrelated = cache._dir / "package.json"
+    unrelated.write_text('{"private": true}')
     cache.clear()
     assert cache.get(key) is None
+    assert unrelated.exists()
 
 
 def test_cache_stats(tmp_path):

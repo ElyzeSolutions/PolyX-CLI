@@ -13,7 +13,16 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from polyx.exceptions import AuthenticationError, PolyXError, RateLimitError
-from polyx.types import SearchResult, TrendingTopic, Tweet, TweetMetrics, User
+from polyx.types import (
+    NewsAPIError,
+    NewsSearchResult,
+    NewsStory,
+    SearchResult,
+    TrendingTopic,
+    Tweet,
+    TweetMetrics,
+    User,
+)
 
 if TYPE_CHECKING:
     from polyx.config import Config
@@ -23,10 +32,11 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://api.x.com/2"
 
 TWEET_FIELDS = "id,text,author_id,created_at,conversation_id,public_metrics,entities"
-USER_FIELDS = (
-    "id,username,name,public_metrics,verified,description,location,profile_image_url"
-)
+USER_FIELDS = "id,username,name,public_metrics,verified,description,location,profile_image_url"
 EXPANSIONS = "author_id"
+NEWS_FIELDS = (
+    "id,name,summary,hook,category,updated_at,contexts,cluster_posts_results,keywords,disclaimer"
+)
 
 _SINCE_PATTERN = re.compile(r"^(\d+)([hd])$")
 
@@ -275,6 +285,53 @@ class XAPIv2Client:
             next_token=next_token if next_token else "",
             client_type="api_v2",
             pages_fetched=pages_fetched,
+        )
+
+    async def search_news(
+        self,
+        query: str,
+        max_results: int = 10,
+        max_age_hours: int = 168,
+    ) -> NewsSearchResult:
+        """Search X News stories using the official ``GET /2/news/search`` endpoint.
+
+        X accepts 1–100 stories, a 1–720 hour freshness window, and queries up
+        to 2,048 characters. The response may contain both stories and RFC 7807
+        problem details, so partial results are preserved.
+        """
+        clean_query = query.strip()
+        if not clean_query or len(clean_query) > 2048:
+            raise PolyXError("News query must contain between 1 and 2,048 characters")
+        if not 1 <= max_results <= 100:
+            raise PolyXError("News max_results must be between 1 and 100")
+        if not 1 <= max_age_hours <= 720:
+            raise PolyXError("News max_age_hours must be between 1 and 720")
+
+        params: dict[str, Any] = {
+            "query": clean_query,
+            "max_results": max_results,
+            "max_age_hours": max_age_hours,
+            "news.fields": NEWS_FIELDS,
+        }
+        payload = await self._request("GET", f"{BASE_URL}/news/search", params=params)
+
+        raw_stories = payload.get("data")
+        raw_errors = payload.get("errors")
+        stories_data = raw_stories if isinstance(raw_stories, list) else []
+        errors_data = raw_errors if isinstance(raw_errors, list) else []
+        stories = [NewsStory.from_dict(item) for item in stories_data if isinstance(item, dict)]
+        errors = [NewsAPIError.from_dict(item) for item in errors_data if isinstance(item, dict)]
+
+        meta = payload.get("meta")
+        result_count = meta.get("result_count") if isinstance(meta, dict) else None
+        total_results = result_count if isinstance(result_count, int) else len(stories)
+
+        return NewsSearchResult(
+            stories=stories,
+            query=clean_query,
+            total_results=total_results,
+            max_age_hours=max_age_hours,
+            errors=errors,
         )
 
     # ------------------------------------------------------------------

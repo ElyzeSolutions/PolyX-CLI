@@ -7,6 +7,13 @@ import pytest
 from polyx.types import SearchResult, TrendingTopic, Tweet, TweetMetrics, User
 
 
+@pytest.fixture(autouse=True)
+def isolate_runtime(monkeypatch, tmp_path):
+    """Keep a developer's real credentials and data out of unit tests."""
+    monkeypatch.setattr("polyx.config.load_dotenv", lambda *args, **kwargs: False)
+    monkeypatch.setenv("POLYX_DATA_DIR", str(tmp_path / "polyx-data"))
+
+
 @pytest.fixture
 def sample_tweet() -> Tweet:
     return Tweet(

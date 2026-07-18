@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -181,6 +182,234 @@ class SearchResult:
             cost_usd=data.get("cost_usd", 0.0),
             client_type=data.get("client_type", ""),
             pages_fetched=data.get("pages_fetched", 0),
+        )
+
+
+def _string_list(value: Any) -> list[str]:
+    """Return string items from an API value, ignoring malformed entries."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _string(value: Any) -> str:
+    """Return a string API value without leaking ``None`` into output."""
+    return value if isinstance(value, str) else ""
+
+
+def _integer(value: Any, default: int) -> int:
+    """Return an integer API value or a safe default."""
+    return value if isinstance(value, int) else default
+
+
+def _legacy_timestamp(value: Any) -> str:
+    """Normalize a legacy epoch-millisecond timestamp to ISO 8601."""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, str):
+        cleaned = value.strip()
+        try:
+            milliseconds = int(cleaned)
+        except ValueError:
+            return cleaned
+    elif isinstance(value, (int, float)):
+        milliseconds = value
+    else:
+        return ""
+    try:
+        timestamp = datetime.fromtimestamp(milliseconds / 1_000, UTC)
+    except (OSError, OverflowError, ValueError):
+        return ""
+    return timestamp.isoformat().replace("+00:00", "Z")
+
+
+@dataclass
+class NewsPost:
+    """A Post clustered by X under a news story."""
+
+    post_id: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"post_id": self.post_id}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> NewsPost:
+        return cls(post_id=_string(data.get("post_id")))
+
+
+@dataclass
+class NewsEntities:
+    events: list[str] = field(default_factory=list)
+    organizations: list[str] = field(default_factory=list)
+    people: list[str] = field(default_factory=list)
+    places: list[str] = field(default_factory=list)
+    products: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {
+            "events": self.events,
+            "organizations": self.organizations,
+            "people": self.people,
+            "places": self.places,
+            "products": self.products,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> NewsEntities:
+        return cls(
+            events=_string_list(data.get("events")),
+            organizations=_string_list(data.get("organizations")),
+            people=_string_list(data.get("people")),
+            places=_string_list(data.get("places")),
+            products=_string_list(data.get("products")),
+        )
+
+
+@dataclass
+class NewsContexts:
+    """Structured entities and market context attached to a news story."""
+
+    entities: NewsEntities = field(default_factory=NewsEntities)
+    tickers: list[str] = field(default_factory=list)
+    teams: list[str] = field(default_factory=list)
+    topics: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entities": self.entities.to_dict(),
+            "finance": {"tickers": self.tickers},
+            "sports": {"teams": self.teams},
+            "topics": self.topics,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> NewsContexts:
+        entities = data.get("entities")
+        finance = data.get("finance")
+        sports = data.get("sports")
+        return cls(
+            entities=NewsEntities.from_dict(entities if isinstance(entities, dict) else {}),
+            tickers=_string_list(finance.get("tickers")) if isinstance(finance, dict) else [],
+            teams=_string_list(sports.get("teams")) if isinstance(sports, dict) else [],
+            topics=_string_list(data.get("topics")),
+        )
+
+
+@dataclass
+class NewsStory:
+    """A breaking-news story clustered and summarized by X."""
+
+    id: str
+    name: str = ""
+    summary: str = ""
+    hook: str = ""
+    category: str = ""
+    updated_at: str = ""
+    contexts: NewsContexts = field(default_factory=NewsContexts)
+    cluster_posts: list[NewsPost] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    disclaimer: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "summary": self.summary,
+            "hook": self.hook,
+            "category": self.category,
+            "updated_at": self.updated_at,
+            "contexts": self.contexts.to_dict(),
+            "cluster_posts_results": [post.to_dict() for post in self.cluster_posts],
+            "keywords": self.keywords,
+            "disclaimer": self.disclaimer,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> NewsStory:
+        contexts = data.get("contexts")
+        raw_posts = data.get("cluster_posts_results")
+        posts = raw_posts if isinstance(raw_posts, list) else []
+        return cls(
+            id=_string(data.get("id")) or _string(data.get("rest_id")),
+            name=_string(data.get("name")),
+            summary=_string(data.get("summary")),
+            hook=_string(data.get("hook")),
+            category=_string(data.get("category")),
+            updated_at=_string(data.get("updated_at"))
+            or _legacy_timestamp(data.get("last_updated_at_ms")),
+            contexts=NewsContexts.from_dict(contexts if isinstance(contexts, dict) else {}),
+            cluster_posts=[NewsPost.from_dict(item) for item in posts if isinstance(item, dict)],
+            keywords=_string_list(data.get("keywords")),
+            disclaimer=_string(data.get("disclaimer")),
+        )
+
+
+@dataclass
+class NewsAPIError:
+    """RFC 7807 problem detail returned alongside an X News response."""
+
+    title: str = ""
+    type: str = ""
+    detail: str = ""
+    status: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "type": self.type,
+            "detail": self.detail,
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> NewsAPIError:
+        status = data.get("status")
+        return cls(
+            title=_string(data.get("title")),
+            type=_string(data.get("type")),
+            detail=_string(data.get("detail")),
+            status=status if isinstance(status, int) else None,
+        )
+
+
+@dataclass
+class NewsSearchResult:
+    stories: list[NewsStory] = field(default_factory=list)
+    query: str = ""
+    total_results: int = 0
+    max_age_hours: int = 168
+    errors: list[NewsAPIError] = field(default_factory=list)
+    client_type: str = "api_v2"
+    domain: str = ""
+    cached: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stories": [story.to_dict() for story in self.stories],
+            "query": self.query,
+            "total_results": self.total_results,
+            "max_age_hours": self.max_age_hours,
+            "errors": [error.to_dict() for error in self.errors],
+            "client_type": self.client_type,
+            "domain": self.domain,
+            "cached": self.cached,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> NewsSearchResult:
+        raw_stories = data.get("stories")
+        raw_errors = data.get("errors")
+        stories = raw_stories if isinstance(raw_stories, list) else []
+        errors = raw_errors if isinstance(raw_errors, list) else []
+        return cls(
+            stories=[NewsStory.from_dict(item) for item in stories if isinstance(item, dict)],
+            query=_string(data.get("query")),
+            total_results=_integer(data.get("total_results"), 0),
+            max_age_hours=_integer(data.get("max_age_hours"), 168),
+            errors=[NewsAPIError.from_dict(item) for item in errors if isinstance(item, dict)],
+            client_type=_string(data.get("client_type")) or "api_v2",
+            domain=_string(data.get("domain")),
+            cached=bool(data.get("cached", False)),
         )
 
 
