@@ -39,3 +39,27 @@ def test_cost_reset(tmp_path):
 
     tracker.reset_today()
     assert tracker.get_daily().total_cost == 0
+
+
+def test_news_resource_cost(tmp_path):
+    config = Config.load()
+    config.data_dir = tmp_path
+    tracker = CostTracker(config)
+
+    cost = tracker.record("news", 4, "news/search")
+
+    assert cost == 0.02
+    assert tracker.get_daily().total_cost == 0.02
+
+
+def test_current_official_user_and_trends_rates(tmp_path):
+    config = Config.load()
+    config.data_dir = tmp_path
+    tracker = CostTracker(config)
+
+    user_cost = tracker.record("user_lookup", 0, "user_lookup")
+    trends_cost = tracker.record("trends", 0, "trends")
+
+    assert user_cost == 0.01
+    assert trends_cost == 0.01
+    assert tracker.get_daily().total_cost == 0.02

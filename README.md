@@ -3,10 +3,11 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/ElyzeSolutions/PolyX-CLI/main/docs/assets/polyx-readme.png" alt="PolyX terminal interface showing search, monitoring, trends, sentiment, and report generation" width="720" />
 
-  <p><strong>X/Twitter intelligence from the terminal.</strong></p>
-  <p>Search live conversations, monitor topics, score sentiment, inspect trends, and generate clean reports from one CLI.</p>
+  <p><strong>X/Twitter news and intelligence from the terminal.</strong></p>
+  <p>Search breaking news and live conversations, monitor topics, score sentiment, inspect trends, and generate clean reports from one CLI.</p>
   <p>
     <code>search</code>
+    <code>news</code>
     <code>watch</code>
     <code>trends</code>
     <code>analyze</code>
@@ -21,6 +22,7 @@ PolyX is built for research, trading, monitoring, and agent workflows where sign
 ## Why use it
 
 - Search X quickly from the terminal with structured output.
+- Search X's first-party breaking-news clusters with summaries, entity context, tickers, and source Post IDs.
 - Prefer the official X API v2 when you have a bearer token.
 - Fall back to a cookie-based GraphQL client when you need a non-API path.
 - Layer in Grok, Gemini, or OpenRouter for richer topic analysis.
@@ -57,6 +59,7 @@ The GraphQL path is unofficial and can break when X changes internal endpoints. 
 ## Configuration
 
 Use environment variables directly or copy `.env.example` to a local `.env`.
+PolyX loads the local `.env` automatically without overriding exported values.
 
 | Variable | Purpose |
 | --- | --- |
@@ -93,6 +96,43 @@ polyx search "ai agents" --sentiment --json
 polyx search "solana" --sort likes --pages 2
 ```
 
+Search breaking news through the official X API v2:
+
+```bash
+polyx news "US election" --max-results 25 --max-age-hours 12
+polyx --json news "gold Federal Reserve" --domain gold --max-age-hours 6
+polyx --jsonl news "crypto regulation" --domain polymarket | jq -c '{domain,id,name,summary}'
+polyx --markdown news "gold real yields" --domain gold
+```
+
+`polyx news` requires `X_BEARER_TOKEN`; the cookie-based GraphQL client cannot
+access X News. See [the News API guide](docs/news.md) for the typed response and
+integration contract. News results use the normal PolyX cache and cost ledger;
+use `--no-cache` only when a fresh paid request is necessary. Before a live
+request, PolyX enforces `POLYX_DAILY_BUDGET` and reduces `--max-results` when
+needed so its $0.005/story safety estimate cannot exceed the remaining budget.
+Standalone use defaults to `--domain general`. Integrations such as Polybot pass
+`--domain polymarket` or `--domain gold` explicitly to isolate their records.
+The label is optional and extensible: another integration can pass its own
+lowercase routing label without changing PolyX.
+
+Import an existing X browser session for the GraphQL fallback without exposing
+cookie values in the terminal:
+
+```bash
+uv tool install 'polyx-cli[browser]'
+polyx auth import-browser --browser chrome
+polyx --client graphql search "gold OR XAUUSD" --limit 20
+```
+
+The imported session is stored in `~/.polyx/config.yml` with mode `0600`.
+Browser cookies grant account access and are less stable than the official API;
+use them only as a local fallback.
+
+X also publishes a hosted MCP server for agent tools. It complements PolyX's
+typed, cached ingestion path rather than replacing it; see [X MCP and
+PolyX](docs/mcp.md) for the recommended boundary.
+
 Watch a topic over time:
 
 ```bash
@@ -123,6 +163,9 @@ PolyX works well for both humans and automation:
 - `--jsonl` for stream processing
 - `--csv` for spreadsheets
 - `--markdown` for reports and sharing
+
+News also supports `--csv`. Global format flags go before the command, for
+example `polyx --json news "gold"`.
 
 ## Docker
 

@@ -25,3 +25,5 @@ venv/
 .coverage
 htmlcov/
 *.log
+/config.yml
+/costs.json

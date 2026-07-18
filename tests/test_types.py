@@ -1,6 +1,15 @@
 """Test core types and data models."""
 
-from polyx.types import Sentiment, SentimentResult, SentimentScore, Tweet, TweetMetrics, User
+from polyx.types import (
+    NewsSearchResult,
+    NewsStory,
+    Sentiment,
+    SentimentResult,
+    SentimentScore,
+    Tweet,
+    TweetMetrics,
+    User,
+)
 
 
 def test_tweet_from_dict():
@@ -58,8 +67,36 @@ def test_sentiment_result_serialization():
         bullish_count=1,
         bearish_count=1,
         neutral_count=0,
-        engagement_weighted=0.2
+        engagement_weighted=0.2,
     )
     data = result.to_dict()
     assert data["bullish_count"] == 1
     assert data["per_tweet"][0]["sentiment"] == "positive"
+
+
+def test_news_story_serialization_round_trip():
+    story = NewsStory.from_dict(
+        {
+            "id": "news-1",
+            "name": "Gold breaks higher",
+            "contexts": {
+                "finance": {"tickers": ["XAUUSD", 42]},
+                "entities": {"organizations": ["Federal Reserve", None]},
+            },
+            "cluster_posts_results": [{"post_id": "post-1"}, None],
+        }
+    )
+    result = NewsSearchResult(
+        stories=[story],
+        query="gold",
+        total_results=1,
+        domain="gold",
+        cached=True,
+    )
+    restored = NewsSearchResult.from_dict(result.to_dict())
+
+    assert restored.stories[0].contexts.tickers == ["XAUUSD"]
+    assert restored.stories[0].contexts.entities.organizations == ["Federal Reserve"]
+    assert restored.stories[0].cluster_posts[0].post_id == "post-1"
+    assert restored.domain == "gold"
+    assert restored.cached is True

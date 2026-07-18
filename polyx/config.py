@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import os
+import tempfile
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
+from yaml import YAMLError
+
+from polyx.exceptions import ConfigurationError
 
 
 def _env_first(*keys: str) -> str:
@@ -20,7 +26,8 @@ def _env_first(*keys: str) -> str:
 
 def _data_dir() -> Path:
     """Return the PolyX data directory, creating it if needed."""
-    path = Path(os.environ.get("POLYX_DATA_DIR", Path.home() / ".polyx"))
+    configured = os.environ.get("POLYX_DATA_DIR", "").strip()
+    path = Path(configured) if configured else Path.home() / ".polyx"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -47,7 +54,8 @@ class Config:
 
     @classmethod
     def load(cls) -> Config:
-        """Load config from env vars, then overlay with config file if present."""
+        """Load config from file, then let explicit environment values win."""
+        load_dotenv(Path.cwd() / ".env", override=False)
         cfg = cls(
             x_bearer_token=_env_first("X_BEARER_TOKEN"),
             auth_token=_env_first("AUTH_TOKEN", "TWITTER_AUTH_TOKEN"),
@@ -61,17 +69,78 @@ class Config:
 
         config_file = cfg.data_dir / "config.yml"
         if config_file.exists():
-            with open(config_file) as f:
-                data = yaml.safe_load(f) or {}
+            try:
+                with open(config_file) as f:
+                    data = yaml.safe_load(f) or {}
+            except YAMLError as error:
+                raise ConfigurationError(f"Invalid YAML in {config_file}") from error
+            if not isinstance(data, dict):
+                raise ConfigurationError(f"Invalid mapping in {config_file}")
+            environment_keys = {
+                "x_bearer_token": ("X_BEARER_TOKEN",),
+                "auth_token": ("AUTH_TOKEN", "TWITTER_AUTH_TOKEN"),
+                "ct0": ("CT0", "TWITTER_CT0"),
+                "xai_api_key": ("XAI_API_KEY", "GROK_API_KEY"),
+                "openrouter_api_key": ("OPENROUTER_API_KEY",),
+                "gemini_api_key": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+                "daily_budget": ("POLYX_DAILY_BUDGET",),
+                "cache_ttl": ("POLYX_CACHE_TTL",),
+            }
             for key, value in data.items():
-                if hasattr(cfg, key) and value is not None:
+                if key == "data_dir":
+                    continue
+                explicit_environment = any(
+                    os.environ.get(name, "").strip()
+                    for name in environment_keys.get(key, ())
+                )
+                if hasattr(cfg, key) and value is not None and not explicit_environment:
+                    try:
+                        if key == "daily_budget":
+                            value = float(value)
+                        elif key == "cache_ttl":
+                            value = int(value)
+                    except (TypeError, ValueError) as error:
+                        raise ConfigurationError(
+                            f"Invalid {key} value in {config_file}"
+                        ) from error
                     setattr(cfg, key, value)
 
         return cfg
 
+    def save_browser_cookies(self, auth_token: str, ct0: str) -> Path:
+        """Persist GraphQL browser cookies in the private PolyX config file."""
+        config_file = self.data_dir / "config.yml"
+        data: dict[str, object] = {}
+        if config_file.exists():
+            try:
+                with open(config_file) as file:
+                    loaded = yaml.safe_load(file) or {}
+            except YAMLError as error:
+                raise ConfigurationError(f"Invalid YAML in {config_file}") from error
+            if not isinstance(loaded, dict):
+                raise ConfigurationError(f"Invalid mapping in {config_file}")
+            data.update(loaded)
+        data.update({"auth_token": auth_token, "ct0": ct0})
+
+        descriptor, temporary_name = tempfile.mkstemp(dir=self.data_dir, suffix=".tmp")
+        try:
+            with os.fdopen(descriptor, "w") as file:
+                yaml.safe_dump(data, file, sort_keys=True)
+                file.flush()
+                os.fsync(file.fileno())
+            os.chmod(temporary_name, 0o600)
+            os.replace(temporary_name, config_file)
+            os.chmod(config_file, 0o600)
+        except Exception:
+            with suppress(OSError):
+                os.unlink(temporary_name)
+            raise
+        return config_file
+
     @property
     def cache_dir(self) -> Path:
-        path = Path(os.environ.get("POLYX_CACHE_DIR", self.data_dir / "cache"))
+        configured = os.environ.get("POLYX_CACHE_DIR", "").strip()
+        path = Path(configured) if configured else self.data_dir / "cache"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
