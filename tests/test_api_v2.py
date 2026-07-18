@@ -180,10 +180,15 @@ async def test_search_news_accepts_documented_legacy_response_fields(monkeypatch
             {
                 "rest_id": "2244994945",
                 "name": "Election update",
-                "last_updated_at_ms": "2026-07-18T09:00:00Z",
+                "last_updated_at_ms": 1784365200000,
                 "contexts": None,
                 "cluster_posts_results": "malformed",
-            }
+            },
+            {
+                "rest_id": "2244994946",
+                "name": "Election update string timestamp",
+                "last_updated_at_ms": "1784365200000",
+            },
         ],
         "meta": {},
     }
@@ -196,10 +201,11 @@ async def test_search_news_accepts_documented_legacy_response_fields(monkeypatch
         async with client:
             result = await client.search_news("election")
 
-    assert result.total_results == 1
+    assert result.total_results == 2
     assert result.stories[0].id == "2244994945"
     assert result.stories[0].updated_at == "2026-07-18T09:00:00Z"
     assert result.stories[0].cluster_posts == []
+    assert result.stories[1].updated_at == "2026-07-18T09:00:00Z"
 
 
 @pytest.mark.asyncio

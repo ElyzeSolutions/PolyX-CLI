@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -201,6 +202,27 @@ def _integer(value: Any, default: int) -> int:
     return value if isinstance(value, int) else default
 
 
+def _legacy_timestamp(value: Any) -> str:
+    """Normalize a legacy epoch-millisecond timestamp to ISO 8601."""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, str):
+        cleaned = value.strip()
+        try:
+            milliseconds = int(cleaned)
+        except ValueError:
+            return cleaned
+    elif isinstance(value, (int, float)):
+        milliseconds = value
+    else:
+        return ""
+    try:
+        timestamp = datetime.fromtimestamp(milliseconds / 1_000, UTC)
+    except (OSError, OverflowError, ValueError):
+        return ""
+    return timestamp.isoformat().replace("+00:00", "Z")
+
+
 @dataclass
 class NewsPost:
     """A Post clustered by X under a news story."""
@@ -313,7 +335,8 @@ class NewsStory:
             summary=_string(data.get("summary")),
             hook=_string(data.get("hook")),
             category=_string(data.get("category")),
-            updated_at=_string(data.get("updated_at")) or _string(data.get("last_updated_at_ms")),
+            updated_at=_string(data.get("updated_at"))
+            or _legacy_timestamp(data.get("last_updated_at_ms")),
             contexts=NewsContexts.from_dict(contexts if isinstance(contexts, dict) else {}),
             cluster_posts=[NewsPost.from_dict(item) for item in posts if isinstance(item, dict)],
             keywords=_string_list(data.get("keywords")),
