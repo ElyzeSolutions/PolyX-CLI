@@ -6,6 +6,7 @@ as a small typed client and CLI surface. Tweet search remains unchanged.
 ## CLI
 
 ```bash
+polyx news "breaking technology news"
 polyx news "gold Federal Reserve" --domain gold
 polyx news "US election" --domain polymarket --max-results 25 --max-age-hours 12
 polyx --json news "gold Federal Reserve" --domain gold
@@ -19,9 +20,11 @@ The official limits are enforced at both the CLI and client boundaries:
 - `max_results`: 1–100, default 10
 - `max_age_hours`: 1–720, default 168
 
-News search requires the official API v2 client and `X_BEARER_TOKEN`. Endpoint
-output must declare `--domain gold` or `--domain polymarket`. PolyX never infers
-a domain, which keeps Gold and prediction-market streams independently routable.
+News search requires the official API v2 client and `X_BEARER_TOKEN`. Standalone
+calls default to `--domain general`; integrations should declare `--domain gold`
+or `--domain polymarket` to keep their streams independently routable. Domain is
+an optional routing label, not a strategy requirement; custom integrations can
+use their own 1-64 character lowercase label.
 
 News uses the standard PolyX TTL cache. The cache key includes the domain,
 query, result limit, and freshness window. Cache hits do not create ledger

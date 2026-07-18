@@ -8,6 +8,7 @@ import os
 import tempfile
 import time
 from contextlib import suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -26,6 +27,15 @@ class FileCache:
     def _key_path(self, key: str) -> Path:
         hashed = hashlib.md5(key.encode()).hexdigest()
         return self._dir / f"{hashed}.json"
+
+    def _cache_files(self) -> list[Path]:
+        """Return only files that match PolyX's hashed cache filename contract."""
+        return [
+            path
+            for path in self._dir.glob("*.json")
+            if len(path.stem) == 32
+            and all(character in "0123456789abcdef" for character in path.stem)
+        ]
 
     def get(self, key: str, ttl: int | None = None) -> Any | None:
         """Get cached value if it exists and hasn't expired."""
@@ -72,7 +82,7 @@ class FileCache:
     def clear(self) -> int:
         """Delete all cache files. Returns count of deleted files."""
         count = 0
-        for path in self._dir.glob("*.json"):
+        for path in self._cache_files():
             try:
                 path.unlink()
                 count += 1
@@ -87,7 +97,7 @@ class FileCache:
         oldest = None
         newest = None
 
-        for path in self._dir.glob("*.json"):
+        for path in self._cache_files():
             total_files += 1
             total_size += path.stat().st_size
             mtime = path.stat().st_mtime
@@ -107,7 +117,7 @@ class FileCache:
         """Remove expired entries. Returns count of pruned files."""
         count = 0
         now = time.time()
-        for path in self._dir.glob("*.json"):
+        for path in self._cache_files():
             try:
                 with open(path) as f:
                     entry = json.load(f)

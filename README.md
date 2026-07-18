@@ -59,6 +59,7 @@ The GraphQL path is unofficial and can break when X changes internal endpoints. 
 ## Configuration
 
 Use environment variables directly or copy `.env.example` to a local `.env`.
+PolyX loads the local `.env` automatically without overriding exported values.
 
 | Variable | Purpose |
 | --- | --- |
@@ -98,7 +99,7 @@ polyx search "solana" --sort likes --pages 2
 Search breaking news through the official X API v2:
 
 ```bash
-polyx news "US election" --domain polymarket --max-results 25 --max-age-hours 12
+polyx news "US election" --max-results 25 --max-age-hours 12
 polyx --json news "gold Federal Reserve" --domain gold --max-age-hours 6
 polyx --jsonl news "crypto regulation" --domain polymarket | jq -c '{domain,id,name,summary}'
 polyx --markdown news "gold real yields" --domain gold
@@ -110,6 +111,27 @@ integration contract. News results use the normal PolyX cache and cost ledger;
 use `--no-cache` only when a fresh paid request is necessary. Before a live
 request, PolyX enforces `POLYX_DAILY_BUDGET` and reduces `--max-results` when
 needed so its $0.005/story safety estimate cannot exceed the remaining budget.
+Standalone use defaults to `--domain general`. Integrations such as Polybot pass
+`--domain polymarket` or `--domain gold` explicitly to isolate their records.
+The label is optional and extensible: another integration can pass its own
+lowercase routing label without changing PolyX.
+
+Import an existing X browser session for the GraphQL fallback without exposing
+cookie values in the terminal:
+
+```bash
+uv tool install 'polyx-cli[browser]'
+polyx auth import-browser --browser chrome
+polyx --client graphql search "gold OR XAUUSD" --limit 20
+```
+
+The imported session is stored in `~/.polyx/config.yml` with mode `0600`.
+Browser cookies grant account access and are less stable than the official API;
+use them only as a local fallback.
+
+X also publishes a hosted MCP server for agent tools. It complements PolyX's
+typed, cached ingestion path rather than replacing it; see [X MCP and
+PolyX](docs/mcp.md) for the recommended boundary.
 
 Watch a topic over time:
 

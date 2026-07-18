@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from functools import wraps
 from typing import Any
 
 import click
 
 from polyx import __version__
+from polyx.exceptions import AuthenticationError, ConfigurationError, NotSupportedError
 
 
 def async_command(f):  # noqa: ANN001, ANN201
@@ -22,6 +25,45 @@ def async_command(f):  # noqa: ANN001, ANN201
 def _news_cache_key(query: str, domain: str, max_results: int, max_age_hours: int) -> str:
     """Build the canonical cache key for a News request."""
     return f"news:v1:{domain}:{max_results}:{max_age_hours}:{query}"
+
+
+def _normalize_news_domain(
+    _context: click.Context,
+    _parameter: click.Parameter,
+    value: str,
+) -> str:
+    """Normalize an optional, integration-defined News routing label."""
+    domain = value.strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", domain):
+        raise click.BadParameter(
+            "use 1-64 lowercase letters, numbers, hyphens, or underscores"
+        )
+    return domain
+
+
+def _select_browser_session(cookies: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Select one unexpired auth/CSRF pair from a single X cookie domain."""
+    sessions: dict[str, dict[str, str]] = {}
+    now = time.time()
+    for cookie in cookies:
+        name = cookie.get("name")
+        value = cookie.get("value")
+        domain = str(cookie.get("domain", "")).lstrip(".").lower()
+        expires = cookie.get("expires")
+        if (
+            name not in {"auth_token", "ct0"}
+            or not value
+            or domain not in {"x.com", "twitter.com"}
+            or (expires is not None and not isinstance(expires, (int, float)))
+            or (isinstance(expires, (int, float)) and expires > 0 and expires <= now)
+        ):
+            continue
+        sessions.setdefault(domain, {})[str(name)] = str(value)
+    for domain in ("x.com", "twitter.com"):
+        session = sessions.get(domain, {})
+        if set(session) == {"auth_token", "ct0"}:
+            return session
+    return None
 
 
 class AliasedGroup(click.Group):
@@ -169,9 +211,11 @@ async def search(
 )
 @click.option(
     "--domain",
-    type=click.Choice(["polymarket", "gold"]),
-    required=True,
-    help="Routing domain for downstream consumers.",
+    default="general",
+    show_default=True,
+    callback=_normalize_news_domain,
+    metavar="LABEL",
+    help="Optional routing label for downstream consumers.",
 )
 @click.option("--no-cache", is_flag=True, help="Bypass cache and fetch fresh stories.")
 @click.pass_context
@@ -215,19 +259,74 @@ async def news(
         )
     live_max_results = min(max_results, affordable_results)
 
-    async with AutoClient(config, client_type=ctx.obj["client_type"]) as client:
-        result = await client.search_news(
-            query,
-            max_results=live_max_results,
-            max_age_hours=max_age_hours,
-        )
+    try:
+        async with AutoClient(config, client_type=ctx.obj["client_type"]) as client:
+            result = await client.search_news(
+                query,
+                max_results=live_max_results,
+                max_age_hours=max_age_hours,
+            )
+    except (AuthenticationError, ConfigurationError, NotSupportedError) as error:
+        raise click.ClickException(str(error)) from error
 
     result.domain = domain
     # X has already served the paid resources. Record them before output or
     # cache I/O so a broken pipe or local write failure cannot hide the spend.
     costs.record("news", result.total_results, "news/search")
     click.echo(fmt.format_news(result))
-    cache.set(cache_key, result.to_dict(), ttl=config.cache_ttl)
+    if live_max_results == max_results and result.stories and not result.errors:
+        cache.set(cache_key, result.to_dict(), ttl=config.cache_ttl)
+
+
+@main.group()
+def auth() -> None:
+    """Manage X authentication without printing secrets."""
+
+
+@auth.command("import-browser")
+@click.option(
+    "--browser",
+    type=click.Choice(["chrome", "edge", "firefox"]),
+    default="chrome",
+    show_default=True,
+)
+def import_browser_auth(browser: str) -> None:
+    """Import auth_token and ct0 from a local browser profile."""
+    try:
+        import rookiepy
+    except ImportError as error:
+        raise click.ClickException(
+            "Browser import needs the optional browser extra: "
+            "uv tool install 'polyx-cli[browser]'"
+        ) from error
+
+    extractor = getattr(rookiepy, browser)
+    try:
+        cookies = extractor(["x.com", "twitter.com"])
+    except Exception as error:
+        raise click.ClickException(
+            f"The X session in {browser.title()} could not be read. "
+            "Close the browser or unlock its credential store, then try again."
+        ) from error
+    selected = _select_browser_session(cookies)
+    if selected is None:
+        raise click.ClickException(
+            f"No complete authenticated X session was found in {browser.title()}. "
+            "Sign in to x.com in that browser and try again."
+        )
+
+    from polyx.config import Config
+
+    try:
+        destination = Config.load().save_browser_cookies(
+            selected["auth_token"], selected["ct0"]
+        )
+    except ConfigurationError as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(
+        f"Imported the X browser session into {destination}. "
+        "Use --client graphql to select the cookie fallback."
+    )
 
 
 @main.command()
