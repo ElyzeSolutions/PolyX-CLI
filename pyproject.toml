@@ -43,7 +43,7 @@ rich = [
     "rich>=13.0",
 ]
 browser = [
-    "rookiepy>=0.5",
+    "rookiepy>=0.5.6",
 ]
 dev = [
     "pytest>=8.0",
