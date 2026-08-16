@@ -6,15 +6,33 @@ import asyncio
 import re
 import time
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 
 from polyx import __version__
 from polyx.exceptions import AuthenticationError, ConfigurationError, NotSupportedError
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
 
-def async_command(f):  # noqa: ANN001, ANN201
+SUBSCRIPTION_AND_API_PROVIDERS = [
+    "grok-subscription",
+    "codex-subscription",
+    "claude-subscription",
+    "cursor-subscription",
+    "antigravity-subscription",
+    "openai",
+    "claude",
+    "grok",
+    "openrouter",
+    "gemini",
+]
+
+
+def async_command(
+    f: Callable[..., Coroutine[Any, Any, Any]],
+) -> Callable[..., Any]:
     """Decorator to run async click commands."""
     @wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -436,21 +454,30 @@ async def watch(ctx: click.Context, query: str, interval: str, webhook: str | No
 
 @main.command()
 @click.argument("query")
-@click.option("--provider", "-p", type=click.Choice(["grok", "openrouter", "gemini"]), help="AI provider.")
-@click.option("--model", "-m", help="Model name (e.g. 'gemini/gemini-pro').")
+@click.option(
+    "--provider",
+    "-p",
+    type=click.Choice(SUBSCRIPTION_AND_API_PROVIDERS),
+    required=True,
+    help="AI provider.",
+)
+@click.option("--model", "-m", help="Provider-native model ID override.")
 @click.option("--prompt", help="Custom analysis prompt.")
 @click.pass_context
 @async_command
-async def analyze(ctx: click.Context, query: str, provider: str | None, model: str | None, prompt: str | None) -> None:
+async def analyze(
+    ctx: click.Context,
+    query: str,
+    provider: str,
+    model: str | None,
+    prompt: str | None,
+) -> None:
     """AI-powered tweet analysis."""
     from polyx.ai.registry import get_provider
     from polyx.client.auto import AutoClient
     from polyx.config import Config
 
     config = Config.load()
-    # Default provider if not specified and not in model
-    provider = provider or "gemini"
-
     async with AutoClient(config, client_type=ctx.obj["client_type"]) as client:
         result = await client.search(query, limit=50, pages=2)
 
@@ -463,7 +490,12 @@ async def analyze(ctx: click.Context, query: str, provider: str | None, model: s
 @click.argument("topic")
 @click.option("--pages", default=3, help="Pages of tweets to fetch.")
 @click.option("--sentiment", is_flag=True, help="Include sentiment analysis.")
-@click.option("--provider", "-p", type=click.Choice(["grok", "openrouter", "gemini"]), help="AI provider for synthesis.")
+@click.option(
+    "--provider",
+    "-p",
+    type=click.Choice(SUBSCRIPTION_AND_API_PROVIDERS),
+    help="AI provider for synthesis.",
+)
 @click.option("--model", "-m", help="Model override.")
 @click.option("--accounts", multiple=True, help="Specific accounts to include.")
 @click.option("--save", is_flag=True, help="Save report to file.")
@@ -484,15 +516,193 @@ async def report(
     from polyx.output.reports import ReportGenerator
 
     config = Config.load()
-    # Default provider if not specified and not in model
-    provider = provider or "gemini"
-
     generator = ReportGenerator(config, client_type=ctx.obj["client_type"])
     report_text = await generator.generate(
         topic, pages=pages, sentiment=sentiment,
         provider=provider, model=model, accounts=list(accounts), save=save,
     )
     click.echo(report_text)
+
+
+@main.group("ai")
+def ai_providers() -> None:
+    """Inspect AI credential modes and live subscription model catalogs."""
+
+
+@ai_providers.command("disable")
+@click.argument(
+    "provider",
+    type=click.Choice(
+        [
+            "grok-subscription",
+            "codex-subscription",
+            "claude-subscription",
+            "cursor-subscription",
+            "antigravity-subscription",
+        ]
+    ),
+)
+def ai_provider_disable(provider: str) -> None:
+    """Mark an unavailable subscription CLI disabled without affecting API mode."""
+
+    from polyx.config import Config
+
+    config = Config.load()
+    providers = tuple((*config.disabled_subscription_providers, provider))
+    config.save_disabled_subscription_providers(providers)
+    click.echo(f"Disabled {provider}; its separately configured API mode is unchanged.")
+
+
+@ai_providers.command("enable")
+@click.argument(
+    "provider",
+    type=click.Choice(
+        [
+            "grok-subscription",
+            "codex-subscription",
+            "claude-subscription",
+            "cursor-subscription",
+            "antigravity-subscription",
+        ]
+    ),
+)
+def ai_provider_enable(provider: str) -> None:
+    """Re-enable discovery and use of a subscription CLI."""
+
+    from polyx.config import Config
+
+    config = Config.load()
+    providers = tuple(
+        item for item in config.disabled_subscription_providers if item != provider
+    )
+    config.save_disabled_subscription_providers(providers)
+    click.echo(f"Enabled {provider}; PolyX will require its signed-in CLI entitlement.")
+
+
+@ai_providers.command("setup-key")
+@click.argument(
+    "provider",
+    type=click.Choice(["openai", "claude", "grok", "gemini", "openrouter"]),
+)
+def ai_provider_setup_key(provider: str) -> None:
+    """Open the official API-key page for an explicit paid provider mode."""
+
+    destinations = {
+        "openai": ("https://platform.openai.com/api-keys", "OPENAI_API_KEY"),
+        "claude": ("https://console.anthropic.com/settings/keys", "ANTHROPIC_API_KEY"),
+        "grok": ("https://console.x.ai/", "XAI_API_KEY"),
+        "gemini": ("https://aistudio.google.com/app/apikey", "GOOGLE_API_KEY"),
+        "openrouter": ("https://openrouter.ai/settings/keys", "OPENROUTER_API_KEY"),
+    }
+    url, variable = destinations[provider]
+    click.launch(url)
+    click.echo(
+        f"Opened the official {provider} key page. Store the key in {variable}; "
+        "PolyX never switches to this paid mode automatically."
+    )
+
+
+@ai_providers.command("providers")
+@click.pass_context
+@async_command
+async def ai_provider_list(ctx: click.Context) -> None:
+    """List authenticated CLI providers and the models offered by each account."""
+
+    import json
+
+    from polyx.ai.api_catalog import PRICING_AS_OF, PRICING_URLS, api_model_rows
+    from polyx.ai.subscription_cli import discover_subscription_providers
+    from polyx.config import Config
+
+    config = Config.load()
+    subscriptions = await discover_subscription_providers(
+        config.disabled_subscription_providers
+    )
+    providers: list[dict[str, object]] = [
+        *subscriptions,
+        {
+            "provider": "grok",
+            "credential_mode": "api_key",
+            "ready": bool(config.xai_api_key),
+            "default_model": "grok-4.3",
+            "models": api_model_rows("grok"),
+            "pricing_as_of": PRICING_AS_OF,
+            "pricing_url": PRICING_URLS["grok"],
+            "detail": "Explicit paid xAI API mode; never selected as a subscription fallback.",
+        },
+        {
+            "provider": "openai",
+            "credential_mode": "api_key",
+            "ready": bool(config.openai_api_key),
+            "default_model": "gpt-5.6-luna",
+            "models": api_model_rows("openai"),
+            "pricing_as_of": PRICING_AS_OF,
+            "pricing_url": PRICING_URLS["openai"],
+            "detail": "Explicit paid OpenAI API mode; separate from ChatGPT/Codex subscription.",
+        },
+        {
+            "provider": "claude",
+            "credential_mode": "api_key",
+            "ready": bool(config.anthropic_api_key),
+            "default_model": "claude-sonnet-4-6",
+            "models": api_model_rows("claude"),
+            "pricing_as_of": PRICING_AS_OF,
+            "pricing_url": PRICING_URLS["claude"],
+            "detail": "Explicit paid Anthropic API mode; separate from Claude Code subscription.",
+        },
+        {
+            "provider": "gemini",
+            "credential_mode": "api_key",
+            "ready": bool(config.gemini_api_key),
+            "default_model": "gemini-3.5-flash-lite",
+            "models": api_model_rows("gemini"),
+            "pricing_as_of": PRICING_AS_OF,
+            "pricing_url": PRICING_URLS["gemini"],
+            "detail": "Explicit paid Gemini API mode; separate from Antigravity subscription.",
+        },
+        {
+            "provider": "openrouter",
+            "credential_mode": "api_key",
+            "ready": bool(config.openrouter_api_key),
+            "default_model": "openai/gpt-5-nano",
+            "models": api_model_rows("openrouter"),
+            "pricing_as_of": PRICING_AS_OF,
+            "pricing_url": PRICING_URLS["openrouter"],
+            "detail": "Explicit OpenRouter API mode; routed-model pricing must be verified live.",
+        },
+    ]
+    if ctx.obj["output_format"] in {"json", "jsonl"}:
+        if ctx.obj["output_format"] == "jsonl":
+            click.echo("\n".join(json.dumps(item, sort_keys=True) for item in providers))
+        else:
+            click.echo(json.dumps(providers, indent=2, sort_keys=True))
+        return
+    for provider in providers:
+        status = "ready" if provider["ready"] else "not ready"
+        click.echo(
+            f"{provider['provider']} [{provider['credential_mode']}] — {status}; "
+            f"default: {provider['default_model']}"
+        )
+        models = provider["models"]
+        if isinstance(models, list):
+            for model in models:
+                if isinstance(model, dict):
+                    marker = " *" if model.get("default") else ""
+                    price = ""
+                    if "input_usd_per_mtok" in model:
+                        input_price = model.get("input_usd_per_mtok")
+                        output_price = model.get("output_usd_per_mtok")
+                        if input_price is None or output_price is None:
+                            price = " — live routed price"
+                        else:
+                            price = f" — ${input_price}/${output_price} per input/output MTok"
+                    click.echo(
+                        f"  {model.get('id')} — {model.get('label')}{marker}{price}"
+                    )
+        click.echo(f"  {provider['detail']}")
+        if provider.get("pricing_url"):
+            click.echo(f"  Pricing as of: {provider['pricing_as_of']}")
+            click.echo(f"  Pricing: {provider['pricing_url']}")
 
 
 @main.group()
@@ -558,9 +768,21 @@ def health() -> None:
     else:
         click.echo("GraphQL: not configured (set AUTH_TOKEN + CT0)")
 
-    for name, key in [("Grok", config.xai_api_key), ("OpenRouter", config.openrouter_api_key), ("Gemini", config.gemini_api_key)]:
+    for name, key in [
+        ("OpenAI", config.openai_api_key),
+        ("Claude API", config.anthropic_api_key),
+        ("Grok", config.xai_api_key),
+        ("OpenRouter", config.openrouter_api_key),
+        ("Gemini", config.gemini_api_key),
+    ]:
         status = "configured" if key else "not configured"
         click.echo(f"{name}: {status}")
+
+    if config.disabled_subscription_providers:
+        click.echo(
+            "Subscription CLIs disabled: "
+            + ", ".join(config.disabled_subscription_providers)
+        )
 
     click.echo("Status: OK")
 

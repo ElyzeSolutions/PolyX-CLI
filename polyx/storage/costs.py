@@ -50,7 +50,8 @@ class CostTracker:
             return {"entries": [], "daily": {}}
         try:
             with open(self._file) as f:
-                return json.load(f)
+                loaded = json.load(f)
+                return loaded if isinstance(loaded, dict) else {"entries": [], "daily": {}}
         except (json.JSONDecodeError, OSError):
             return {"entries": [], "daily": {}}
 

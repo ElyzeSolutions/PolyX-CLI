@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 
 import httpx
 
@@ -13,10 +14,10 @@ from polyx.types import Sentiment, SentimentScore, Tweet
 class BaseProvider:
     """Base class for OpenAI-compatible AI providers."""
 
-    PROVIDER_NAME: str = "base"
-    BASE_URL: str = ""
-    ENV_KEY: str = ""
-    DEFAULT_MODEL: str = ""
+    PROVIDER_NAME: ClassVar[str] = "base"
+    BASE_URL: ClassVar[str] = ""
+    ENV_KEY: ClassVar[str] = ""
+    DEFAULT_MODEL: ClassVar[str] = ""
 
     def __init__(self, api_key: str, model: str | None = None) -> None:
         if not api_key:
@@ -48,8 +49,16 @@ class BaseProvider:
                     raise PolyXError(f"{self.PROVIDER_NAME} API error {resp.status_code}: {resp.text[:200]}")
                 break
 
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            try:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError, ValueError) as error:
+                raise PolyXError(
+                    f"{self.PROVIDER_NAME} API returned an invalid response"
+                ) from error
+            if not isinstance(content, str):
+                raise PolyXError(f"{self.PROVIDER_NAME} API returned no text")
+            return content
 
     async def analyze_sentiment(self, tweets: list[Tweet], batch_size: int = 20) -> list[SentimentScore]:
         """Analyze sentiment for tweets using AI."""

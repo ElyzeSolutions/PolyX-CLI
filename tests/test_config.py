@@ -62,3 +62,18 @@ def test_config_file_cannot_redirect_credential_storage(monkeypatch, tmp_path):
     assert config.data_dir == tmp_path
     assert destination == tmp_path / "config.yml"
     assert config_module.Config.load().auth_token == "new-auth"
+
+
+def test_subscription_opt_out_is_private_and_persistent(monkeypatch, tmp_path):
+    monkeypatch.setenv("POLYX_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("POLYX_DISABLED_SUBSCRIPTION_PROVIDERS", raising=False)
+    config = config_module.Config.load()
+
+    destination = config.save_disabled_subscription_providers(
+        ("claude-subscription", "claude-subscription")
+    )
+
+    assert destination.stat().st_mode & 0o077 == 0
+    assert config_module.Config.load().disabled_subscription_providers == (
+        "claude-subscription",
+    )
