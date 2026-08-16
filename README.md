@@ -25,7 +25,7 @@ PolyX is built for research, trading, monitoring, and agent workflows where sign
 - Search X's first-party breaking-news clusters with summaries, entity context, tickers, and source Post IDs.
 - Prefer the official X API v2 when you have a bearer token.
 - Fall back to a cookie-based GraphQL client when you need a non-API path.
-- Layer in Grok, Gemini, or OpenRouter for richer topic analysis.
+- Layer in an explicitly selected subscription CLI or API-key provider for richer analysis.
 - Save reports, cache results, and keep an eye on API spend.
 
 ## Install
@@ -66,9 +66,12 @@ PolyX loads the local `.env` automatically without overriding exported values.
 | `X_BEARER_TOKEN` | Official X API v2 bearer token |
 | `AUTH_TOKEN` | GraphQL `auth_token` cookie |
 | `CT0` | GraphQL CSRF cookie |
-| `XAI_API_KEY` | xAI key for Grok |
+| `XAI_API_KEY` | xAI API key for the paid `grok` provider |
+| `OPENAI_API_KEY` | OpenAI API key for the paid `openai` provider |
+| `ANTHROPIC_API_KEY` | Anthropic API key for the paid `claude` provider |
 | `OPENROUTER_API_KEY` | OpenRouter key |
 | `GOOGLE_API_KEY` | Google AI key for Gemini |
+| `POLYX_DISABLED_SUBSCRIPTION_PROVIDERS` | Comma-separated subscription CLI opt-outs |
 | `POLYX_DATA_DIR` | Base directory for reports, cache, and cost tracking |
 | `POLYX_CACHE_DIR` | Optional cache directory override |
 | `POLYX_DAILY_BUDGET` | Daily API budget in USD |
@@ -152,6 +155,53 @@ Generate analysis and reports:
 ```bash
 polyx analyze "stablecoins" --provider gemini
 polyx report "AI agents" --pages 3 --sentiment --save
+polyx analyze "semiconductor capex" --provider grok-subscription
+polyx ai providers
+```
+
+### AI credential modes
+
+PolyX exposes subscription and API-key access as separate providers. It never
+falls from a subscription into a paid API request automatically:
+
+- `grok-subscription`: official [Grok Build CLI](https://docs.x.ai/build/overview)
+- `codex-subscription`: official Codex CLI signed in through ChatGPT
+- `claude-subscription`: official Claude Code CLI with an active Pro/Max plan
+- `cursor-subscription`: official Cursor model discovery; analysis is withheld
+  until the CLI exposes a deny-all tool policy
+- `antigravity-subscription`: official Google model discovery; analysis is
+  withheld until the CLI exposes explicit no-tool/read-only-web controls
+- `grok`, `openai`, `claude`, `gemini`, and `openrouter`: explicit API-key modes
+
+`polyx analyze` requires `--provider`. `polyx report` performs no AI synthesis
+unless `--provider` is supplied, so an omitted choice can never trigger a paid
+model accidentally.
+
+Run `polyx ai providers` to see the actual signed-in CLI model catalogs and the
+supported API models. API rows display the catalog's dated input/output USD
+price snapshot per million text tokens and link to the provider pricing page.
+Prices are informational; the provider remains the billing authority. OpenRouter
+aliases are marked as live-routed instead of publishing a stale estimate.
+
+`polyx ai setup-key claude` (or `openai`, `grok`, `gemini`, `openrouter`) opens
+the official key page. `polyx ai disable claude-subscription` records that the
+CLI entitlement is unavailable while leaving `--provider claude` available for
+a future explicitly configured Anthropic key; `polyx ai enable` reverses it.
+
+The subscription drivers follow the adapter boundary used by
+[T3 Code](https://github.com/pingdotgg/t3code): PolyX owns the bounded typed
+analysis contract while each adapter owns its official CLI protocol. Child
+processes receive no API keys, X cookies, or generic secret environment values.
+Sentiment runs without tools. Topic research enables only the provider's
+read-only research capability where it can be constrained; filesystem writes,
+shell execution, plugins, MCP servers, and subagents remain unavailable.
+
+If a CLI is installed but the account lacks a subscription, disable that row
+without removing the separately selectable API provider:
+
+```bash
+export POLYX_DISABLED_SUBSCRIPTION_PROVIDERS=claude-subscription
+polyx analyze "AI infrastructure" --provider claude --model claude-sonnet-4-6
 ```
 
 ## Output formats

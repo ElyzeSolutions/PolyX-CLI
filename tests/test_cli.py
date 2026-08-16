@@ -73,6 +73,47 @@ def test_cli_costs():
     assert "Total cost:" in result.output
 
 
+def test_cli_can_disable_subscription_without_disabling_api(monkeypatch, tmp_path):
+    from polyx.config import Config
+
+    monkeypatch.setenv("POLYX_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("POLYX_DISABLED_SUBSCRIPTION_PROVIDERS", raising=False)
+
+    result = CliRunner().invoke(cli, ["ai", "disable", "claude-subscription"])
+
+    assert result.exit_code == 0
+    assert "separately configured API mode is unchanged" in result.output
+    assert Config.load().disabled_subscription_providers == ("claude-subscription",)
+
+
+def test_cli_setup_key_opens_only_selected_official_page(monkeypatch):
+    opened = []
+    monkeypatch.setattr("click.launch", opened.append)
+
+    result = CliRunner().invoke(cli, ["ai", "setup-key", "claude"])
+
+    assert result.exit_code == 0
+    assert opened == ["https://console.anthropic.com/settings/keys"]
+    assert "ANTHROPIC_API_KEY" in result.output
+
+
+def test_cli_provider_catalog_displays_pricing_snapshot_date(monkeypatch):
+    async def no_subscription_rows(disabled=()):
+        del disabled
+        return []
+
+    monkeypatch.setattr(
+        "polyx.ai.subscription_cli.discover_subscription_providers",
+        no_subscription_rows,
+    )
+
+    result = CliRunner().invoke(cli, ["ai", "providers"])
+
+    assert result.exit_code == 0
+    assert "Pricing as of: 2026-08-16" in result.output
+    assert "Explicit paid Anthropic API mode" in result.output
+
+
 def test_cli_news_json(monkeypatch, tmp_path):
     from polyx.client.api_v2 import XAPIv2Client
     from polyx.types import NewsSearchResult, NewsStory

@@ -204,6 +204,7 @@ def _integer(value: Any, default: int) -> int:
 
 def _legacy_timestamp(value: Any) -> str:
     """Normalize a legacy epoch-millisecond timestamp to ISO 8601."""
+    milliseconds: int | float
     if isinstance(value, bool):
         return ""
     if isinstance(value, str):

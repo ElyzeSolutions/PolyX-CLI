@@ -432,12 +432,13 @@ class GraphQLClient:
         # Long-form note_tweet
         note = tweet_data.get("note_tweet", {}).get("note_tweet_results", {}).get("result", {})
         note_text = note.get("text", "")
-        if note_text:
+        if isinstance(note_text, str) and note_text:
             return note_text
 
         # Standard legacy full_text
         legacy = tweet_data.get("legacy", {})
-        return legacy.get("full_text", "")
+        full_text = legacy.get("full_text", "")
+        return full_text if isinstance(full_text, str) else ""
 
     def _map_tweet_result(self, raw: dict[str, Any]) -> Tweet | None:
         """Map a raw GraphQL tweet result to a :class:`~polyx.types.Tweet`."""
@@ -594,7 +595,7 @@ class GraphQLClient:
             last_error: Exception | None = None
 
             for idx, qid in enumerate(query_ids):
-                payload = {
+                payload: dict[str, Any] = {
                     "variables": {
                         "rawQuery": effective_query,
                         "count": min(limit, 100),

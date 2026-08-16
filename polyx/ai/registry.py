@@ -12,20 +12,44 @@ if TYPE_CHECKING:
 
 
 def get_provider(name: str, config: Config, model: str | None = None) -> BaseProvider:
-    """Get an AI provider instance by name.
-
-    If model starts with a provider name (e.g. 'gemini/'), it overrides the name.
-    """
-    if model and "/" in model:
-        parts = model.split("/", 1)
-        # Check if first part is a known provider
-        if parts[0] in ("grok", "openrouter", "gemini"):
-            name = parts[0]
-            model = parts[1]
+    """Get the explicitly selected provider and optional provider-native model."""
 
     if name == "grok":
         from polyx.ai.grok import GrokProvider
         return GrokProvider(config.xai_api_key, model=model)
+    elif name == "openai":
+        from polyx.ai.openai import OpenAIProvider
+
+        return OpenAIProvider(config.openai_api_key, model=model)
+    elif name == "claude":
+        from polyx.ai.anthropic import AnthropicProvider
+
+        return AnthropicProvider(config.anthropic_api_key, model=model)
+    elif name == "grok-subscription":
+        _require_subscription_enabled(name, config)
+        from polyx.ai.grok_subscription import GrokSubscriptionProvider
+
+        return GrokSubscriptionProvider(model=model)
+    elif name == "codex-subscription":
+        _require_subscription_enabled(name, config)
+        from polyx.ai.subscription_cli import CodexSubscriptionProvider
+
+        return CodexSubscriptionProvider(model=model)
+    elif name == "claude-subscription":
+        _require_subscription_enabled(name, config)
+        from polyx.ai.subscription_cli import ClaudeSubscriptionProvider
+
+        return ClaudeSubscriptionProvider(model=model)
+    elif name == "cursor-subscription":
+        _require_subscription_enabled(name, config)
+        from polyx.ai.subscription_cli import CursorSubscriptionProvider
+
+        return CursorSubscriptionProvider(model=model)
+    elif name == "antigravity-subscription":
+        _require_subscription_enabled(name, config)
+        from polyx.ai.subscription_cli import AntigravitySubscriptionProvider
+
+        return AntigravitySubscriptionProvider(model=model)
     elif name == "openrouter":
         from polyx.ai.openrouter import OpenRouterProvider
         return OpenRouterProvider(config.openrouter_api_key, model=model)
@@ -33,4 +57,16 @@ def get_provider(name: str, config: Config, model: str | None = None) -> BasePro
         from polyx.ai.gemini import GeminiProvider
         return GeminiProvider(config.gemini_api_key, model=model)
     else:
-        raise ConfigurationError(f"Unknown AI provider: {name}. Available: grok, openrouter, gemini")
+        raise ConfigurationError(
+            "Unknown AI provider: "
+            f"{name}. Available: grok-subscription, codex-subscription, "
+            "claude-subscription, cursor-subscription, antigravity-subscription, "
+            "openai, claude, grok, openrouter, gemini"
+        )
+
+
+def _require_subscription_enabled(name: str, config: Config) -> None:
+    if name in config.disabled_subscription_providers:
+        raise ConfigurationError(
+            f"{name} is disabled in PolyX configuration; enable it only after subscribing"
+        )
